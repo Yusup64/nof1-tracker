@@ -8,7 +8,9 @@ import {
   handleStatusCommand,
   handleProfitCommand,
   ProfitCommandOptions,
-  handleTelegramCommand
+  handleTelegramCommand,
+  handleServeCommand,
+  ServeCommandOptions
 } from './commands';
 import { handleError, getVersion } from './utils/command-helpers';
 
@@ -97,6 +99,24 @@ program
       await handleProfitCommand(options);
     } catch (error) {
       handleError(error, 'Profit analysis failed');
+    }
+  });
+
+// API server command
+program
+  .command('serve')
+  .description('Start an HTTP API server for monitoring and status queries')
+  .option('-p, --port <port>', 'port for the API server', '8080')
+  .option('-H, --host <host>', 'host/interface to bind (default: 0.0.0.0)', '0.0.0.0')
+  .action(async (options: ServeCommandOptions & { port?: string; host?: string }) => {
+    try {
+      const parsedPort = options.port ? parseInt(options.port, 10) : undefined;
+      await handleServeCommand({
+        port: parsedPort && !Number.isNaN(parsedPort) ? parsedPort : undefined,
+        host: options.host
+      });
+    } catch (error) {
+      handleError(error, 'API server failed');
     }
   });
 

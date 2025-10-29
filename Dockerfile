@@ -13,6 +13,7 @@ FROM deps AS build
 COPY tsconfig.json ./
 COPY src ./src
 COPY docs ./docs
+COPY dashboard ./dashboard
 RUN npm run build
 RUN npm prune --omit=dev
 
@@ -26,6 +27,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json package-lock.json ./
 COPY docs ./docs
+COPY --from=build /app/dashboard ./dashboard
 
 # Ensure writable directory for runtime caches/order history
 RUN mkdir -p /app/data && chown -R node:node /app

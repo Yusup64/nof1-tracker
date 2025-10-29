@@ -1,6 +1,6 @@
 import { TradingPlan } from "../types/trading";
 import { TelegramService } from "./telegram-service";
-import { BinanceService, StopLossOrder, TakeProfitOrder, OrderResponse } from "./binance-service";
+import { BinanceService, StopLossOrder, TakeProfitOrder, OrderResponse, UserTrade } from "./binance-service";
 import { ConfigManager } from "./config-manager";
 
 export interface ExecutionResult {
@@ -77,6 +77,44 @@ export class TradingExecutor {
       return await this.binanceService.getPositions();
     } catch (error) {
       console.error(`❌ Failed to get positions: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取所有仓位(包括零仓位)
+   */
+  async getAllPositions() {
+    try {
+      return await this.binanceService.getAllPositions();
+    } catch (error) {
+      console.error(`❌ Failed to get all positions: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取交易所标签(如 BINANCE/BYBIT)
+   */
+  getExchangeLabel(): string {
+    return this.exchangeLabel;
+  }
+
+  /**
+   * 是否使用测试网
+   */
+  isTestnet(): boolean {
+    return this.testnet;
+  }
+
+  /**
+   * 获取最近成交
+   */
+  async getRecentTrades(limit: number = 25): Promise<UserTrade[]> {
+    try {
+      return await this.binanceService.getUserTrades(undefined, undefined, undefined, undefined, limit);
+    } catch (error) {
+      console.error(`❌ Failed to get recent trades: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
   }

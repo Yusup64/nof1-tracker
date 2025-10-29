@@ -1,3 +1,4 @@
+import path from 'path';
 import { FollowPlan } from '../scripts/analyze-api';
 import { CommandOptions, ServiceContainer } from '../types/command';
 import {
@@ -9,6 +10,7 @@ import {
   printRiskAssessment,
   executeTradeWithHistory
 } from '../utils/command-helpers';
+import { startApiServer, type ApiServerHandle } from '../server/api-server';
 
 /**
  * 处理单个跟随计划
@@ -60,6 +62,23 @@ async function processFollowPlan(
 export async function handleFollowCommand(agentName: string, options: CommandOptions): Promise<void> {
   const services = initializeServices(true);
   applyConfiguration(services.analyzer, options);
+
+  let apiServer: ApiServerHandle | undefined;
+  const apiPort = parseInt(process.env.API_PORT || '8080', 10);
+  const apiHost = process.env.API_HOST || '0.0.0.0';
+  const staticDir = process.env.DASHBOARD_DIR
+    ? path.resolve(process.env.DASHBOARD_DIR)
+    : path.join(process.cwd(), 'dashboard');
+  try {
+    apiServer = await startApiServer({
+      services,
+      port: apiPort,
+      host: apiHost,
+      staticDir
+    });
+  } catch (error) {
+    console.error(`⚠️ Failed to start API server on http://${apiHost}:${apiPort}:`, error instanceof Error ? error.message : error);
+  }
 
   console.log(`🤖 Starting to follow agent: ${agentName}`);
 
@@ -125,11 +144,22 @@ export async function handleFollowCommand(agentName: string, options: CommandOpt
     const intervalId = setInterval(poll, intervalMs);
 
     // Handle graceful shutdown
-    process.on('SIGINT', () => {
-      console.log('\n\n👋 Stopping agent monitoring...');
+    const shutdown = async (signal: NodeJS.Signals) => {
+      console.log(`\n\n👋 Received ${signal}. Stopping agent monitoring...`);
       clearInterval(intervalId);
+      if (apiServer) {
+        try {
+          await apiServer.close();
+          console.log('✅ API server stopped');
+        } catch (error) {
+          console.error('❌ Failed to stop API server:', error instanceof Error ? error.message : error);
+        }
+      }
       console.log('✅ Monitoring stopped gracefully');
       process.exit(0);
-    });
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   }
 }
