@@ -65,9 +65,21 @@ export class ApiAnalyzer {
     this.validateEnvironment();
 
     // 初始化服务
+    const exchangeId = process.env[ENV_VARS.TRADING_EXCHANGE]?.toLowerCase();
+    const apiKey =
+      exchangeId === 'binance'
+        ? process.env[ENV_VARS.BINANCE_API_KEY]
+        : process.env[ENV_VARS.EXCHANGE_API_KEY];
+    const apiSecret =
+      exchangeId === 'binance'
+        ? process.env[ENV_VARS.BINANCE_API_SECRET]
+        : process.env[ENV_VARS.EXCHANGE_API_SECRET];
+
     this.binanceService = new BinanceService(
-      process.env[ENV_VARS.BINANCE_API_KEY] || "",
-      process.env[ENV_VARS.BINANCE_API_SECRET] || ""
+      apiKey || '',
+      apiSecret || '',
+      undefined,
+      exchangeId
     );
     this.tradingExecutor = new TradingExecutor();
     this.orderHistoryManager = new OrderHistoryManager();
@@ -103,15 +115,25 @@ export class ApiAnalyzer {
       return;
     }
 
-    const requiredEnvVars = [
-      ENV_VARS.BINANCE_API_KEY,
-      ENV_VARS.BINANCE_API_SECRET
-    ];
+    const exchange = (process.env[ENV_VARS.TRADING_EXCHANGE] || 'binance').toLowerCase();
+    const keyCandidates = exchange === 'bybit'
+      ? [ENV_VARS.BYBIT_API_KEY, ENV_VARS.EXCHANGE_API_KEY]
+      : [ENV_VARS.BINANCE_API_KEY, ENV_VARS.EXCHANGE_API_KEY];
+    const secretCandidates = exchange === 'bybit'
+      ? [ENV_VARS.BYBIT_API_SECRET, ENV_VARS.EXCHANGE_API_SECRET]
+      : [ENV_VARS.BINANCE_API_SECRET, ENV_VARS.EXCHANGE_API_SECRET];
 
-    for (const envVar of requiredEnvVars) {
-      if (!process.env[envVar]) {
-        throw new ConfigurationError(`Missing required environment variable: ${envVar}`, envVar);
-      }
+    const hasKey = keyCandidates.some(envVar => !!process.env[envVar]);
+    const hasSecret = secretCandidates.some(envVar => !!process.env[envVar]);
+
+    if (!hasKey) {
+      const missingVar = keyCandidates[0];
+      throw new ConfigurationError(`Missing required environment variable: ${missingVar}`, missingVar);
+    }
+
+    if (!hasSecret) {
+      const missingVar = secretCandidates[0];
+      throw new ConfigurationError(`Missing required environment variable: ${missingVar}`, missingVar);
     }
   }
 

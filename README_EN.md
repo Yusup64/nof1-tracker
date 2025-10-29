@@ -62,8 +62,9 @@ npm start -- profit
 - **📊 Real-time Monitoring**: Configurable polling interval for continuous agent tracking
 - **🔄 Smart Copy Trading**: Auto-detect open, close, switch positions (OID changes), and stop-loss/take-profit
 - **🎯 Profit Target Exit**: Support custom profit targets with automatic position closing when reached
-- **🔄 Auto Refollow**: Optional auto-refollow feature that automatically re-enters after profit target exit or manual closure
-- **⚡ Futures Trading**: Full support for Binance USDT perpetual futures, 1x-125x leverage
+- **🔄 Auto Refollow**: Optional auto-refollow feature that automatically re-enters after profit target exit
+- **🌐 Multi-Exchange Support**: Leverage ccxt to switch between Binance and Bybit via `TRADING_EXCHANGE`
+- **⚡ Futures Trading**: Full support for Binance / Bybit USDT perpetual futures with up to 1x-125x leverage (exchange dependent)
 - **📈 Profit Analysis**: Accurate profit analysis based on real trading data (including fee statistics)
 - **🛡️ Risk Control**: Support `--risk-only` mode for observation without execution
 - **📱 Telegram Notifications**: Real-time Telegram notifications for trade executions and stop-loss/take-profit events
@@ -188,6 +189,13 @@ Set up Telegram notifications to receive real-time trading signals and alerts:
 ### 3. Environment Variables
 
 ```env
+# Exchange Selection
+TRADING_EXCHANGE=binance        # available: binance, bybit
+
+# Shared credentials (optional fallback for all exchanges)
+EXCHANGE_API_KEY=
+EXCHANGE_API_SECRET=
+
 # Binance API Configuration - Must support futures trading
 BINANCE_API_KEY=your_binance_api_key_here
 BINANCE_API_SECRET=your_binance_api_secret_here
@@ -195,6 +203,16 @@ BINANCE_TESTNET=true  # true=testnet, false=mainnet
 
 # Other Configuration Options
 LOG_LEVEL=INFO  # Log level
+
+# Bybit API Configuration - Required when following Bybit
+BYBIT_API_KEY=your_bybit_api_key_here
+BYBIT_API_SECRET=your_bybit_api_secret_here
+BYBIT_TESTNET=true  # true=testnet, false=mainnet
+
+# Trading Configuration
+MAX_POSITION_SIZE=1000
+DEFAULT_LEVERAGE=10
+RISK_PERCENTAGE=2.0
 
 # Telegram Configuration (Optional)
 TELEGRAM_ENABLED=true

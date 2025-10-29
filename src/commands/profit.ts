@@ -18,15 +18,23 @@ export interface ProfitCommandOptions {
 export async function handleProfitCommand(options: ProfitCommandOptions): Promise<void> {
   try {
     // 验证环境变量
-    const apiKey = process.env.BINANCE_API_KEY;
-    const apiSecret = process.env.BINANCE_API_SECRET;
+    const exchangeId = (process.env.TRADING_EXCHANGE || 'binance').toLowerCase();
+    const apiKey =
+      exchangeId === 'bybit'
+        ? process.env.BYBIT_API_KEY || process.env.EXCHANGE_API_KEY
+        : process.env.BINANCE_API_KEY || process.env.EXCHANGE_API_KEY;
+    const apiSecret =
+      exchangeId === 'bybit'
+        ? process.env.BYBIT_API_SECRET || process.env.EXCHANGE_API_SECRET
+        : process.env.BINANCE_API_SECRET || process.env.EXCHANGE_API_SECRET;
 
     if (!apiKey || !apiSecret) {
-      throw new Error('BINANCE_API_KEY and BINANCE_API_SECRET environment variables are required');
+      const missing = exchangeId === 'bybit' ? 'BYBIT_API_KEY/BYBIT_API_SECRET' : 'BINANCE_API_KEY/BINANCE_API_SECRET';
+      throw new Error(`${missing} (or EXCHANGE_API_KEY/EXCHANGE_API_SECRET) environment variables are required`);
     }
 
     // 初始化服务
-    const binanceService = new BinanceService(apiKey, apiSecret);
+    const binanceService = new BinanceService(apiKey, apiSecret, undefined, exchangeId);
     const tradeHistoryService = new TradeHistoryService(binanceService);
     const profitCalculator = new ProfitCalculator();
     const orderHistoryManager = new OrderHistoryManager();

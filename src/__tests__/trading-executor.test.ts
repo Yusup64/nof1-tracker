@@ -794,7 +794,7 @@ describe("TradingExecutor", () => {
         const result = await executor.executePlan(tradingPlan);
 
         expect(result.success).toBe(false);
-        expect(result.error).toBe("Failed to connect to Binance API");
+        expect(result.error).toBe("Failed to connect to BINANCE API");
       });
 
       it("should handle placeOrder failure in executePlan", async () => {
@@ -1276,7 +1276,7 @@ describe("TradingExecutor", () => {
         const result = await executor.executePlan(tradingPlan);
 
         expect(result.success).toBe(false);
-        expect(result.error).toBe("Failed to connect to Binance API");
+        expect(result.error).toBe("Failed to connect to BINANCE API");
       });
     });
 

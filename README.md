@@ -62,8 +62,9 @@ npm start -- profit
 - **📊 实时监控**: 可配置轮询间隔，持续跟踪Agent交易动作
 - **🔄 智能跟单**: 自动识别开仓、平仓、换仓（OID变化）和止盈止损
 - **🎯 盈利目标退出**: 支持设置自定义盈利目标，达到后自动平仓退出
-- **🔄 自动重新跟单**: 可选的自动重新跟单功能，支持盈利退出和手工平仓后自动重新入场
-- **⚡ 合约交易**: 完整支持Binance USDT永续合约，支持1x-125x杠杆
+- **🔄 自动重新跟单**: 可选的自动重新跟单功能，盈利退出后自动重新入场
+- **🌐 多交易所支持**: 通过 ccxt 接入 Binance 与 Bybit，设置 `TRADING_EXCHANGE` 即可切换
+- **⚡ 合约交易**: 完整支持 Binance / Bybit USDT 永续合约，支持1x-125x杠杆（视交易所限制）
 - **📈 盈利统计**: 精确的盈利分析，基于真实交易数据计算（含手续费统计）
 - **🛡️ 风险控制**: 支持`--risk-only`模式，只观察不执行交易
 
@@ -118,6 +119,13 @@ Dashboard项目地址: https://github.com/terryso/nof1-tracker-dashboard
 ### 2. 环境变量配置
 
 ```env
+# Exchange Selection
+TRADING_EXCHANGE=binance        # 可选: binance, bybit
+
+# 通用密钥 (可选，如果同时给多个交易所使用同一套密钥)
+EXCHANGE_API_KEY=
+EXCHANGE_API_SECRET=
+
 # Binance API Configuration - 必须支持合约交易
 BINANCE_API_KEY=your_binance_api_key_here
 BINANCE_API_SECRET=your_binance_api_secret_here
@@ -128,6 +136,16 @@ LOG_LEVEL=INFO  # 日志级别
 TELEGRAM_API_TOKEN=  # Telegram Bot Token (可选)
 TELEGRAM_CHAT_ID=    # Telegram Chat ID (可选)
 TELEGRAM_ENABLED=false
+
+# Bybit API Configuration - 如需跟单 Bybit 必须填写
+BYBIT_API_KEY=your_bybit_api_key_here
+BYBIT_API_SECRET=your_bybit_api_secret_here
+BYBIT_TESTNET=true  # true=测试网, false=正式网
+
+# Trading Configuration
+MAX_POSITION_SIZE=1000
+DEFAULT_LEVERAGE=10
+RISK_PERCENTAGE=2.0
 ```
 
 ## 📖 使用方法

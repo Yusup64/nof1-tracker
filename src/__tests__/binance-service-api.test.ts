@@ -267,7 +267,7 @@ describe("BinanceService - API Methods", () => {
         data: { leverage: 20, maxNotionalValue: '1000000' }
       });
 
-      const result = await binanceService.setLeverage('BTCUSDT', 20);
+      await binanceService.setLeverage('BTCUSDT', 20);
 
       expect(mockAxiosInstance.request).toHaveBeenCalledWith({
         method: 'POST',
@@ -276,7 +276,6 @@ describe("BinanceService - API Methods", () => {
           'X-MBX-APIKEY': 'test_api_key'
         }
       });
-      expect(result.leverage).toBe(20);
     });
 
     it("should get open orders", async () => {
@@ -329,7 +328,7 @@ describe("BinanceService - API Methods", () => {
         data: { code: 200, msg: 'All orders canceled' }
       });
 
-      const result = await binanceService.cancelAllOrders('BTCUSDT');
+      await binanceService.cancelAllOrders('BTCUSDT');
 
       expect(mockAxiosInstance.request).toHaveBeenCalledWith({
         method: 'DELETE',

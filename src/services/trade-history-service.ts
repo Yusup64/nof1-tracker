@@ -24,10 +24,12 @@ export class TradeHistoryService {
   private cacheDir: string;
   private binanceService: BinanceService;
   private cacheExpiry: number = 5 * 60 * 1000; // 5分钟缓存过期时间
+  private exchangeLabel: string;
 
   constructor(binanceService: BinanceService, cacheDir: string = './data') {
     this.binanceService = binanceService;
     this.cacheDir = cacheDir;
+    this.exchangeLabel = binanceService.id.toUpperCase();
     fs.ensureDirSync(cacheDir);
   }
 
@@ -113,7 +115,7 @@ export class TradeHistoryService {
     }
 
     try {
-      logInfo(`📡 Fetching trades from Binance API for ${symbol || 'all symbols'}...`);
+      logInfo(`📡 Fetching trades from ${this.exchangeLabel} API for ${symbol || 'all symbols'}...`);
 
       // 从API获取数据
       const trades = await this.binanceService.getAllUserTradesInRange(startTime, endTime, symbol);
@@ -121,7 +123,7 @@ export class TradeHistoryService {
       // 缓存数据
       this.saveCachedData(trades, symbol, startTime, endTime);
 
-      logInfo(`✅ Retrieved ${trades.length} trades from Binance API for ${symbol || 'all symbols'}`);
+      logInfo(`✅ Retrieved ${trades.length} trades from ${this.exchangeLabel} API for ${symbol || 'all symbols'}`);
       return trades;
     } catch (error) {
       logWarn(`❌ Failed to fetch trades from API: ${error instanceof Error ? error.message : 'Unknown error'}`);

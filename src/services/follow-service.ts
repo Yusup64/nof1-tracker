@@ -7,6 +7,7 @@ import { OrderHistoryManager } from './order-history-manager';
 import { RiskManager } from './risk-manager';
 import { FuturesCapitalManager } from './futures-capital-manager';
 import { TradingExecutor } from './trading-executor';
+import { BinanceService } from './binance-service';
 import {
   LOGGING_CONFIG,
   TIME_CONFIG,
@@ -41,9 +42,14 @@ export class FollowService {
     private positionManager: PositionManager,
     private orderHistoryManager: OrderHistoryManager,
     private riskManager: RiskManager,
-    private capitalManager: FuturesCapitalManager,
-    private tradingExecutor: TradingExecutor
+  private capitalManager: FuturesCapitalManager,
+  private tradingExecutor: TradingExecutor
   ) {}
+
+  private getExchangeLabel(): string {
+    const service = (this.positionManager as any)?.binanceService as BinanceService | undefined;
+    return service?.id ? service.id.toUpperCase() : 'BINANCE';
+  }
 
   /**
    * 从订单历史重建上次仓位状态
@@ -361,13 +367,16 @@ export class FollowService {
         return 0;
       }
 
+      const exchangeLabel = this.getExchangeLabel();
+
       // 从币安API获取真实仓位数据
-      const binancePositions = await this.positionManager['binanceService'].getAllPositions();
-      const targetSymbol = this.positionManager['binanceService'].convertSymbol(position.symbol);
+      const exchange = (this.positionManager as any).binanceService as BinanceService;
+      const binancePositions = await exchange.getAllPositions();
+      const targetSymbol = exchange.convertSymbol(position.symbol);
       const binancePosition = binancePositions.find(p => p.symbol === targetSymbol && parseFloat(p.positionAmt) !== 0);
 
       if (!binancePosition) {
-        logWarn(`⚠️ No binance position found for ${position.symbol} (${targetSymbol})`);
+        logWarn(`⚠️ No ${exchangeLabel} position found for ${position.symbol} (${targetSymbol})`);
         return 0;
       }
 
@@ -380,7 +389,7 @@ export class FollowService {
       // 计算保证金基础
       let marginBase = 0;
       if (marginType === 'ISOLATED') {
-        marginBase = parseFloat(binancePosition.isolatedMargin);
+        marginBase = parseFloat(binancePosition.isolatedMargin!);
       } else {
         // 交叉保证金，使用实际占用保证金
         marginBase = Math.abs(positionAmt * entryPrice) / parseFloat(binancePosition.leverage);
@@ -390,11 +399,11 @@ export class FollowService {
       const profitPercentage = marginBase > 0 ? (unrealizedProfit / marginBase) * 100 : 0;
 
       // 调试信息
-      logInfo(`📈 ${position.symbol} Binance profit data:`);
+      logInfo(`📈 ${position.symbol} ${exchangeLabel} profit data:`);
       logInfo(`   💰 Unrealized P&L: $${unrealizedProfit.toFixed(2)}`);
       logInfo(`   💰 Margin: $${marginBase.toFixed(2)} (${marginType})`);
       logInfo(`   📊 Profit %: ${profitPercentage.toFixed(2)}%`);
-      logInfo(`   📊 Binance entry: $${entryPrice.toFixed(2)}, Agent entry: $${position.entry_price}`);
+      logInfo(`   📊 ${exchangeLabel} entry: $${entryPrice.toFixed(2)}, Agent entry: $${position.entry_price}`);
 
       // 检查计算结果的合理性
       if (!isFinite(profitPercentage)) {
@@ -460,19 +469,22 @@ export class FollowService {
     const { previousPosition, currentPosition } = change;
     if (!previousPosition || !currentPosition) return;
 
+    const exchangeLabel = this.getExchangeLabel();
+
     // 检查新订单是否已处理（去重）
     if (this.orderHistoryManager.isOrderProcessed(currentPosition.entry_oid, currentPosition.symbol)) {
       logDebug(`${LOGGING_CONFIG.EMOJIS.INFO} SKIPPED: ${currentPosition.symbol} new entry (OID: ${currentPosition.entry_oid}) already processed`);
       return;
     }
 
-    // 检查 Binance 是否真的有该币种的仓位
+    // 检查交易所是否真的有该币种的仓位
     let hasActualPosition = false;
     let releasedMargin: number | undefined;
     
     try {
-      const binancePositions = await this.positionManager['binanceService'].getPositions();
-      const targetSymbol = this.positionManager['binanceService'].convertSymbol(currentPosition.symbol);
+      const exchange = (this.positionManager as any).binanceService as BinanceService;
+      const binancePositions = await exchange.getPositions();
+      const targetSymbol = exchange.convertSymbol(currentPosition.symbol);
       
       const existingPosition = binancePositions.find(
         p => p.symbol === targetSymbol && parseFloat(p.positionAmt) !== 0
@@ -482,9 +494,9 @@ export class FollowService {
       
       if (existingPosition) {
         const positionAmt = parseFloat(existingPosition.positionAmt);
-        logDebug(`${LOGGING_CONFIG.EMOJIS.INFO} Found existing position on Binance: ${existingPosition.symbol} ${positionAmt > 0 ? 'LONG' : 'SHORT'} ${Math.abs(positionAmt)}`);
+        logDebug(`${LOGGING_CONFIG.EMOJIS.INFO} Found existing position on ${exchangeLabel}: ${existingPosition.symbol} ${positionAmt > 0 ? 'LONG' : 'SHORT'} ${Math.abs(positionAmt)}`);
       } else {
-        logDebug(`${LOGGING_CONFIG.EMOJIS.INFO} No existing position found on Binance for ${targetSymbol}`);
+        logDebug(`${LOGGING_CONFIG.EMOJIS.INFO} No existing position found on ${exchangeLabel} for ${targetSymbol}`);
       }
     } catch (error) {
       console.warn(`${LOGGING_CONFIG.EMOJIS.WARNING} Failed to check existing positions: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -592,20 +604,23 @@ export class FollowService {
     const { currentPosition } = change;
     if (!currentPosition) return;
 
+    const exchangeLabel = this.getExchangeLabel();
+
     // 检查订单是否已处理（去重）
     if (this.orderHistoryManager.isOrderProcessed(currentPosition.entry_oid, currentPosition.symbol)) {
       logDebug(`${LOGGING_CONFIG.EMOJIS.INFO} SKIPPED: ${currentPosition.symbol} position (OID: ${currentPosition.entry_oid}) already processed`);
       return;
     }
 
-    // 检查 Binance 是否已有该币种的仓位(防止程序重启后无法检测到 entry_oid 变化)
+    // 检查交易所是否已有该币种的仓位(防止程序重启后无法检测到 entry_oid 变化)
     let releasedMargin: number | undefined;
     try {
-      const binancePositions = await this.positionManager['binanceService'].getPositions();
-      const targetSymbol = this.positionManager['binanceService'].convertSymbol(currentPosition.symbol);
+      const exchange = (this.positionManager as any).binanceService as BinanceService;
+      const binancePositions = await exchange.getPositions();
+      const targetSymbol = exchange.convertSymbol(currentPosition.symbol);
       
-      logDebug(`${LOGGING_CONFIG.EMOJIS.SEARCH} Checking for existing positions on Binance for ${currentPosition.symbol} (converted: ${targetSymbol})...`);
-      logVerbose(`${LOGGING_CONFIG.EMOJIS.DATA} Found ${binancePositions.length} total position(s) on Binance`);
+      logDebug(`${LOGGING_CONFIG.EMOJIS.SEARCH} Checking for existing positions on ${exchangeLabel} for ${currentPosition.symbol} (converted: ${targetSymbol})...`);
+      logVerbose(`${LOGGING_CONFIG.EMOJIS.DATA} Found ${binancePositions.length} total position(s) on ${exchangeLabel}`);
       
       const existingPosition = binancePositions.find(
         p => p.symbol === targetSymbol && parseFloat(p.positionAmt) !== 0
@@ -613,7 +628,7 @@ export class FollowService {
 
       if (existingPosition) {
         const positionAmt = parseFloat(existingPosition.positionAmt);
-        logInfo(`${LOGGING_CONFIG.EMOJIS.WARNING} Found existing position on Binance: ${existingPosition.symbol} ${positionAmt > 0 ? 'LONG' : 'SHORT'} ${Math.abs(positionAmt)}`);
+        logInfo(`${LOGGING_CONFIG.EMOJIS.WARNING} Found existing position on ${exchangeLabel}: ${existingPosition.symbol} ${positionAmt > 0 ? 'LONG' : 'SHORT'} ${Math.abs(positionAmt)}`);
         logInfo(`${LOGGING_CONFIG.EMOJIS.INFO} Closing existing position before opening new entry (OID: ${currentPosition.entry_oid})...`);
         
         // 获取平仓前余额
@@ -654,7 +669,7 @@ export class FollowService {
           }
         }
       } else {
-        logDebug(`${LOGGING_CONFIG.EMOJIS.SUCCESS} No existing position found on Binance for ${targetSymbol}, proceeding with new position`);
+        logDebug(`${LOGGING_CONFIG.EMOJIS.SUCCESS} No existing position found on ${exchangeLabel} for ${targetSymbol}, proceeding with new position`);
       }
     } catch (error) {
       logWarn(`${LOGGING_CONFIG.EMOJIS.WARNING} Failed to check existing positions: ${error instanceof Error ? error.message : 'Unknown error'}`);

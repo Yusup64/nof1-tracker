@@ -121,8 +121,7 @@ describe("BinanceService - Integration Tests", () => {
     it("should execute setLeverage method", async () => {
       mockAxiosInstance.request.mockResolvedValue({ data: { leverage: 20 } });
 
-      const result = await binanceService.setLeverage('BTCUSDT', 20);
-      expect(result.leverage).toBe(20);
+      await expect(binanceService.setLeverage('BTCUSDT', 20)).resolves.toBeUndefined();
       expect(mockAxiosInstance.request).toHaveBeenCalled();
     });
 
@@ -139,8 +138,7 @@ describe("BinanceService - Integration Tests", () => {
     it("should execute cancelAllOrders method", async () => {
       mockAxiosInstance.request.mockResolvedValue({ data: { code: 200, msg: 'success' } });
 
-      const result = await binanceService.cancelAllOrders('BTCUSDT');
-      expect(result.code).toBe(200);
+      await expect(binanceService.cancelAllOrders('BTCUSDT')).resolves.toBeUndefined();
       expect(mockAxiosInstance.request).toHaveBeenCalled();
     });
 

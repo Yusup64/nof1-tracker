@@ -20,6 +20,7 @@ describe('Status Command', () => {
   });
 
   it('should display system status', () => {
+    process.env.TRADING_EXCHANGE = 'binance';
     process.env.BINANCE_API_KEY = 'test-key';
     process.env.BINANCE_API_SECRET = 'test-secret';
     process.env.BINANCE_TESTNET = 'true';
@@ -32,6 +33,7 @@ describe('Status Command', () => {
   });
 
   it('should show missing environment variables', () => {
+    process.env.TRADING_EXCHANGE = 'binance';
     delete process.env.BINANCE_API_KEY;
     delete process.env.BINANCE_API_SECRET;
 
@@ -41,10 +43,11 @@ describe('Status Command', () => {
   });
 
   it('should display API connectivity status', () => {
+    process.env.TRADING_EXCHANGE = 'binance';
     handleStatusCommand();
 
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('API Connectivity'));
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('nof1 API'));
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Binance API'));
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('BINANCE API'));
   });
 });

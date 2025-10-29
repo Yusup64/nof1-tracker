@@ -1,37 +1,28 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import CryptoJS from 'crypto-js';
+import ccxt, { Exchange as CcxtExchange, Order as CcxtOrder, Position as CcxtPosition } from 'ccxt';
 import http from 'http';
 import https from 'https';
-
-export interface BinanceOrder {
-  symbol: string;
-  side: "BUY" | "SELL";
-  type: "MARKET" | "LIMIT" | "STOP" | "TAKE_PROFIT" | "TAKE_PROFIT_MARKET" | "STOP_MARKET";
-  quantity: string;
-  leverage: number;
-  price?: string;
-  stopPrice?: string;
-  timeInForce?: "GTC" | "IOC" | "FOK";
-  closePosition?: string;
-}
-
-export interface StopLossOrder {
-  symbol: string;
-  side: "BUY" | "SELL";
-  type: "STOP_MARKET" | "STOP";
-  quantity: string;
-  stopPrice: string;
-  closePosition?: string;
-}
-
-export interface TakeProfitOrder {
-  symbol: string;
-  side: "BUY" | "SELL";
-  type: "TAKE_PROFIT_MARKET" | "TAKE_PROFIT";
-  quantity: string;
-  stopPrice: string;
-  closePosition?: string;
-}
+import { PerpExchange } from './exchange/perp-exchange';
+import type {
+  BinanceOrder,
+  StopLossOrder,
+  TakeProfitOrder,
+  OrderResponse,
+  PositionResponse,
+  UserTrade,
+  ExchangeTicker,
+  ExchangeAccountInfo,
+  OrderSide
+} from './exchange/types';
+export type {
+  BinanceOrder,
+  StopLossOrder,
+  TakeProfitOrder,
+  OrderResponse,
+  PositionResponse,
+  UserTrade
+} from './exchange/types';
 
 export interface BinanceApiResponse<T = any> {
   code?: number;
@@ -39,91 +30,82 @@ export interface BinanceApiResponse<T = any> {
   data?: T;
 }
 
+
+(async () => {
+  const exchange = new ccxt.bybit({
+    apiKey: process.env.BYBIT_API_KEY,
+    secret: process.env.BYBIT_API_SECRET,
+    enableRateLimit: true,
+  });
+  exchange.setSandboxMode(process.env.BYBIT_TESTNET === 'true');
+  // console.log("🚀 ~ exchange:", exchange.options)
+  // console.log(await exchange.fetchBalance());
+})();
+
 // Binance API通常直接返回数据，不包装在response对象中
 export type BinanceDirectResponse<T> = T;
 
-export interface OrderResponse {
-  orderId: number;
-  symbol: string;
-  status: string;
-  clientOrderId: string;
-  price: string;
-  avgPrice: string;
-  origQty: string;
-  executedQty: string;
-  cumQty: string;
-  cumQuote: string;
-  timeInForce: string;
-  type: string;
-  reduceOnly: boolean;
-  closePosition: boolean;
-  side: string;
-  positionSide: string;
-  stopPrice: string;
-  workingType: string;
-  priceProtect: boolean;
-  origType: string;
-  time: number;
-  updateTime: number;
-}
-
-export interface PositionResponse {
-  symbol: string;
-  positionAmt: string;
-  entryPrice: string;
-  markPrice: string;
-  unRealizedProfit: string;
-  liquidationPrice: string;
-  leverage: string;
-  maxNotionalValue: string;
-  marginType: string;
-  isolatedMargin: string;
-  isAutoAddMargin: string;
-  positionSide: string;
-  notional: string;
-  isolatedWallet: string;
-  updateTime: number;
-}
-
-export interface UserTrade {
-  symbol: string;
-  id: number;
-  orderId: number;
-  side: 'BUY' | 'SELL';
-  qty: string;
-  price: string;
-  quoteQty: string;
-  commission: string;
-  commissionAsset: string;
-  realizedPnl: string;
-  time: number;
-  positionSide: string;
-  buyer: boolean;
-  maker: boolean;
-}
-
-export class BinanceService {
+export class BinanceService implements PerpExchange {
+  readonly id: string;
   private apiKey: string;
   private apiSecret: string;
-  private baseUrl: string;
-  private client: AxiosInstance;
+  private baseUrl: string | undefined;
+  private client?: AxiosInstance;
   private symbolInfoCache: Map<string, any> = new Map();
-  private serverTimeOffset: number = 0; // 服务器时间偏移量(ms)
-  private httpAgent: http.Agent;
-  private httpsAgent: https.Agent;
+  private serverTimeOffset = 0; // 服务器时间偏移量(ms)
+  private httpAgent?: http.Agent;
+  private httpsAgent?: https.Agent;
+  private useCcxt: boolean;
+  private ccxtExchange?: CcxtExchange;
+  private ccxtMarketsLoaded = false;
+  private ccxtLoadPromise?: Promise<void>;
+  private testnet: boolean;
 
-  constructor(apiKey: string, apiSecret: string, testnet?: boolean) {
-    // 如果没有明确指定，则从环境变量读取
-    if (testnet === undefined) {
-      testnet = process.env.BINANCE_TESTNET === 'true';
+  constructor(apiKey: string, apiSecret: string, testnet?: boolean, exchangeId?: string) {
+    const resolvedExchange = (exchangeId || process.env.TRADING_EXCHANGE || 'binance').toLowerCase();
+    this.id = resolvedExchange;
+    this.useCcxt = resolvedExchange !== 'binance';
+
+    this.apiKey = apiKey || this.resolveApiKey(resolvedExchange);
+    this.apiSecret = apiSecret || this.resolveApiSecret(resolvedExchange);
+    this.testnet = testnet !== undefined ? testnet : this.resolveTestnetFlag(resolvedExchange);
+
+
+    if (this.useCcxt) {
+      this.setupCcxtExchange();
+    } else {
+      this.setupBinanceClient();
     }
-    this.apiKey = apiKey;
-    this.apiSecret = apiSecret;
-    this.baseUrl = testnet
+  }
+
+  private resolveApiKey(exchangeId: string): string {
+    const genericKey = process.env.EXCHANGE_API_KEY || '';
+    if (exchangeId === 'bybit') {
+      return process.env.BYBIT_API_KEY || genericKey || process.env.BINANCE_API_KEY || '';
+    }
+    return process.env.BINANCE_API_KEY || genericKey || '';
+  }
+
+  private resolveApiSecret(exchangeId: string): string {
+    const genericSecret = process.env.EXCHANGE_API_SECRET || '';
+    if (exchangeId === 'bybit') {
+      return process.env.BYBIT_API_SECRET || genericSecret || process.env.BINANCE_API_SECRET || '';
+    }
+    return process.env.BINANCE_API_SECRET || genericSecret || '';
+  }
+
+  private resolveTestnetFlag(exchangeId: string): boolean {
+    if (exchangeId === 'bybit') {
+      return process.env.BYBIT_TESTNET === 'true';
+    }
+    return process.env.BINANCE_TESTNET === 'true';
+  }
+
+  private setupBinanceClient(): void {
+    this.baseUrl = this.testnet
       ? 'https://testnet.binancefuture.com'
       : 'https://fapi.binance.com';
 
-    // 创建自定义 agents 以便稍后清理
     this.httpAgent = new http.Agent({ keepAlive: true });
     this.httpsAgent = new https.Agent({ keepAlive: true });
 
@@ -137,16 +119,198 @@ export class BinanceService {
       httpsAgent: this.httpsAgent,
     });
 
-    // 初始化时同步服务器时间
     this.syncServerTime().catch(err => {
-      console.warn('⚠️ Failed to sync server time:', err.message);
+      console.warn('⚠️ Failed to sync server time:', err instanceof Error ? err.message : 'Unknown error');
     });
+  }
+
+  private async setupCcxtExchange(): Promise<void> {
+    this.baseUrl = '';
+    // const exchangeKey = this.id === 'bybit' ? 'bybit' : this.id;
+    this.ccxtExchange = new ccxt.bybit({
+      apiKey: this.apiKey,
+      secret: this.apiSecret,
+      enableRateLimit: true
+    });
+    const exchange = this.ccxtExchange;
+
+    if (!exchange) {
+      throw new Error(`Failed to initialise CCXT exchange for ${this.id}`);
+    }
+
+    if (this.id === 'bybit') {
+      exchange.options = {
+        ...exchange.options,
+        defaultType: 'swap',
+        defaultSubType: 'linear',
+        category: 'linear',
+        recvWindow: 60000,
+        fetchMarkets: {
+          types: ['linear']
+        }
+      };
+      // Avoid hitting private coin info endpoint during loadMarkets on Bybit
+      exchange.has = {
+        ...exchange.has,
+        fetchCurrencies: false
+      };
+    }
+
+    if (typeof exchange.setSandboxMode === 'function') {
+      exchange.setSandboxMode(!!this.testnet);
+    }
+
+    this.ccxtLoadPromise = exchange.loadMarkets()
+      .then(() => {
+        this.ccxtMarketsLoaded = true;
+      })
+      .catch(error => {
+        console.log("🚀 ~ BinanceService ~ setupCcxtExchange ~ error:", error)
+        console.error(`⚠️ Failed to load markets for ${this.id}:`, error instanceof Error ? error.message : 'Unknown error');
+      });
+  }
+
+  private ensureCcxtExchange(): CcxtExchange {
+    if (!this.ccxtExchange) {
+      throw new Error(`CCXT exchange not initialized for ${this.id}`);
+    }
+    return this.ccxtExchange;
+  }
+
+  private async ensureCcxtMarkets(): Promise<void> {
+    if (!this.ccxtExchange) {
+      return;
+    }
+    if (this.ccxtMarketsLoaded) {
+      return;
+    }
+    if (this.ccxtLoadPromise) {
+      await this.ccxtLoadPromise;
+      return;
+    }
+    this.ccxtLoadPromise = this.ccxtExchange.loadMarkets()
+      .then(() => {
+        this.ccxtMarketsLoaded = true;
+      })
+      .catch(error => {
+        console.error(`⚠️ Failed to load markets for ${this.id}:`, error instanceof Error ? error.message : 'Unknown error');
+      });
+    await this.ccxtLoadPromise;
+  }
+
+  private toCcxtSymbol(symbol: string): string {
+    const baseSymbol = symbol.endsWith('USDT') ? symbol.slice(0, -4) : symbol;
+    if (this.id === 'bybit') {
+      return `${baseSymbol}/USDT:USDT`;
+    }
+    return `${baseSymbol}/USDT`;
+  }
+
+  private fromCcxtSymbol(symbol: string): string {
+    if (symbol.includes(':USDT')) {
+      const [base] = symbol.split('/');
+      return `${base}USDT`;
+    }
+    if (symbol.includes('/')) {
+      const [base] = symbol.split('/');
+      return `${base}USDT`;
+    }
+    return symbol.endsWith('USDT') ? symbol : `${symbol}USDT`;
+  }
+
+  private toSafeNumber(value: string | number | undefined | null): number {
+    if (value === undefined || value === null) {
+      return 0;
+    }
+    if (typeof value === 'number') {
+      return value;
+    }
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private mapCcxtOrder(order: CcxtOrder): OrderResponse {
+    const orderId = order.id ? Number(order.id) : Date.now();
+    const side = (order.side || 'buy').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+
+    return {
+      orderId,
+      symbol: this.fromCcxtSymbol(order.symbol || ''),
+      status: (order.status || 'NEW').toUpperCase(),
+      clientOrderId: order.clientOrderId || '',
+      price: this.toSafeNumber(order.price).toString(),
+      avgPrice: this.toSafeNumber(order.average ?? order.price).toString(),
+      origQty: this.toSafeNumber(order.amount).toString(),
+      executedQty: this.toSafeNumber(order.filled).toString(),
+      cumQty: this.toSafeNumber(order.filled).toString(),
+      cumQuote: this.toSafeNumber(order.cost).toString(),
+      timeInForce: (order.timeInForce || 'GTC') as any,
+      type: (order.type || '').toUpperCase(),
+      reduceOnly: Boolean(order.reduceOnly),
+      closePosition: Boolean(order.reduceOnly),
+      side,
+      positionSide: side === 'SELL' ? 'SHORT' : 'LONG',
+      stopPrice: this.toSafeNumber(order.stopPrice ?? order.triggerPrice).toString(),
+      workingType: 'MARK_PRICE',
+      priceProtect: false,
+      origType: (order.type || '').toUpperCase(),
+      time: order.timestamp || Date.now(),
+      updateTime: order.lastTradeTimestamp || order.timestamp || Date.now(),
+      info: order.info
+    };
+  }
+
+  private mapCcxtPosition(position: CcxtPosition): PositionResponse {
+    const sideMultiplier = position.side === 'short' ? -1 : 1;
+    const rawContracts = (position as any).contracts ?? (position as any).contractSize ?? (position as any).amount;
+    const contracts = this.toSafeNumber(rawContracts);
+    const positionAmt = contracts * sideMultiplier;
+
+    return {
+      symbol: this.fromCcxtSymbol(position.symbol || ''),
+      positionAmt: positionAmt.toString(),
+      entryPrice: this.toSafeNumber(position.entryPrice).toString(),
+      markPrice: this.toSafeNumber(position.markPrice ?? position.lastPrice ?? position.info?.markPrice).toString(),
+      unRealizedProfit: this.toSafeNumber(position.unrealizedPnl ?? position.info?.unrealisedPnl).toString(),
+      liquidationPrice: this.toSafeNumber(position.liquidationPrice ?? position.info?.liqPrice).toString(),
+      leverage: this.toSafeNumber(position.leverage ?? position.info?.leverage).toString(),
+      maxNotionalValue: '',
+      marginType: (position.marginMode || 'cross').toUpperCase(),
+      isolatedMargin: position.marginMode === 'isolated' ? this.toSafeNumber(position.info?.isolatedMargin).toString() : '0',
+      isAutoAddMargin: 'false',
+      positionSide: position.side === 'short' ? 'SHORT' : 'LONG',
+      notional: this.toSafeNumber(position.notional ?? position.contractSize ?? 0).toString(),
+      isolatedWallet: position.marginMode === 'isolated' ? this.toSafeNumber(position.info?.isolatedBalance).toString() : '0',
+      updateTime: position.timestamp || Date.now()
+    };
+  }
+
+  private mapCcxtAccount(balance: any): ExchangeAccountInfo {
+    const usdt = balance?.USDT || balance?.USDC || {};
+    const free = this.toSafeNumber(usdt.free);
+    const total = this.toSafeNumber(usdt.total);
+    const used = this.toSafeNumber(usdt.used);
+
+    return {
+      totalWalletBalance: total.toString(),
+      availableBalance: free.toString(),
+      totalInitialMargin: used.toString(),
+      totalMaintMargin: '0',
+      totalPositionInitialMargin: used.toString(),
+      totalOpenOrderInitialMargin: '0',
+      totalCrossWalletBalance: total.toString()
+    };
   }
 
   /**
    * Convert symbol from nof1 format (BTC) to Binance format (BTCUSDT)
    */
   public convertSymbol(symbol: string): string {
+    if (this.useCcxt) {
+      if (symbol.includes('/') || symbol.includes(':')) {
+        return this.fromCcxtSymbol(symbol);
+      }
+    }
     // If symbol already ends with USDT, return as is
     if (symbol.endsWith('USDT')) {
       return symbol;
@@ -159,6 +323,23 @@ export class BinanceService {
    * Format quantity precision based on symbol
    */
   public formatQuantity(quantity: number | string, symbol: string): string {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      const ccxtSymbol = this.toCcxtSymbol(symbol);
+      const amount = typeof quantity === 'string' ? parseFloat(quantity) : quantity;
+      if (Number.isNaN(amount)) {
+        return '0';
+      }
+      if (this.ccxtMarketsLoaded && exchange.markets?.[ccxtSymbol]) {
+        try {
+          return exchange.amountToPrecision(ccxtSymbol, amount);
+        } catch (error) {
+          console.warn(`⚠️ Failed to format quantity via CCXT for ${ccxtSymbol}:`, error instanceof Error ? error.message : 'Unknown error');
+        }
+      }
+      return amount.toFixed(6);
+    }
+
     const baseSymbol = this.convertSymbol(symbol);
 
     // Updated precision map based on actual Binance futures API specifications
@@ -222,6 +403,23 @@ export class BinanceService {
    * Format price precision based on symbol
    */
   public formatPrice(price: number | string, symbol: string): string {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      const ccxtSymbol = this.toCcxtSymbol(symbol);
+      const actualPrice = typeof price === 'string' ? parseFloat(price) : price;
+      if (Number.isNaN(actualPrice)) {
+        return '0';
+      }
+      if (this.ccxtMarketsLoaded && exchange.markets?.[ccxtSymbol]) {
+        try {
+          return exchange.priceToPrecision(ccxtSymbol, actualPrice);
+        } catch (error) {
+          console.warn(`⚠️ Failed to format price via CCXT for ${ccxtSymbol}:`, error instanceof Error ? error.message : 'Unknown error');
+        }
+      }
+      return actualPrice.toFixed(4);
+    }
+
     const baseSymbol = this.convertSymbol(symbol);
 
     // Price precision map for stop prices and regular prices
@@ -264,6 +462,9 @@ export class BinanceService {
    * 公共方法,允许在遇到时间同步错误时手动重新同步
    */
   public async syncServerTime(): Promise<void> {
+    if (this.useCcxt || !this.client) {
+      return;
+    }
     try {
       const localTime = Date.now();
       const response = await this.client.get('/fapi/v1/time');
@@ -279,6 +480,12 @@ export class BinanceService {
    * 清理资源，关闭所有连接
    */
   public destroy(): void {
+    if (this.useCcxt) {
+      if (this.ccxtExchange && typeof this.ccxtExchange.close === 'function') {
+        this.ccxtExchange.close();
+      }
+      return;
+    }
     // 关闭 HTTP agents
     if (this.httpAgent) {
       this.httpAgent.destroy();
@@ -300,6 +507,12 @@ export class BinanceService {
     method: 'GET' | 'POST' | 'DELETE' = 'GET',
     params: Record<string, any> = {}
   ): Promise<T> {
+    if (this.useCcxt) {
+      throw new Error('Signed REST requests are not supported in CCXT mode');
+    }
+    if (!this.client) {
+      throw new Error('HTTP client is not initialized');
+    }
     try {
       const timestamp = this.getAdjustedTimestamp();
       const recvWindow = 60000; // 60秒窗口,避免时间同步问题
@@ -377,6 +590,12 @@ export class BinanceService {
     endpoint: string,
     params: Record<string, any> = {}
   ): Promise<T> {
+    if (this.useCcxt) {
+      throw new Error('Public REST requests are not supported in CCXT mode');
+    }
+    if (!this.client) {
+      throw new Error('HTTP client is not initialized');
+    }
     try {
       const queryString = Object.keys(params)
         .map(key => `${key}=${encodeURIComponent(params[key])}`)
@@ -410,6 +629,22 @@ export class BinanceService {
    * 获取交易所信息
    */
   async getExchangeInformation(): Promise<any> {
+    if (this.useCcxt) {
+      await this.ensureCcxtMarkets();
+      const exchange = this.ensureCcxtExchange();
+      const symbols = Object.values(exchange.markets || {}).map(market => ({
+        symbol: this.fromCcxtSymbol(market.symbol),
+        filters: [
+          {
+            filterType: 'LOT_SIZE',
+            stepSize: market.limits?.amount?.min !== undefined
+              ? String(market.limits.amount.min)
+              : '0.001'
+          }
+        ]
+      }));
+      return { symbols };
+    }
     return await this.makePublicRequest('/fapi/v1/exchangeInfo');
   }
 
@@ -417,6 +652,26 @@ export class BinanceService {
    * 获取符号信息（带缓存）
    */
   async getSymbolInfo(symbol: string): Promise<any> {
+    if (this.useCcxt) {
+      await this.ensureCcxtMarkets();
+      const exchange = this.ensureCcxtExchange();
+      const ccxtSymbol = this.toCcxtSymbol(symbol);
+      const market = exchange.markets?.[ccxtSymbol];
+      if (market) {
+        return {
+          symbol: this.fromCcxtSymbol(market.symbol),
+          filters: [
+            {
+              filterType: 'LOT_SIZE',
+              stepSize: market.limits?.amount?.min !== undefined
+                ? String(market.limits.amount.min)
+                : '0.001'
+            }
+          ]
+        };
+      }
+    }
+
     const baseSymbol = this.convertSymbol(symbol);
 
     // 如果缓存中有，直接返回
@@ -455,6 +710,17 @@ export class BinanceService {
    * 获取服务器时间
    */
   async getServerTime(): Promise<number> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      if (exchange.has?.fetchTime) {
+        try {
+          return await exchange.fetchTime() as number;
+        } catch (error) {
+          console.warn(`⚠️ Failed to fetch server time from ${this.id}:`, error instanceof Error ? error.message : 'Unknown error');
+        }
+      }
+      return Date.now();
+    }
     const response = await this.makePublicRequest<{ serverTime: number }>('/fapi/v1/time');
     return response.serverTime;
   }
@@ -463,6 +729,23 @@ export class BinanceService {
    * 获取账户信息
    */
   async getAccountInfo(): Promise<any> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+      try {
+        const balance = await exchange.fetchBalance();
+        const mapped = this.mapCcxtAccount(balance);
+        return {
+          ...mapped,
+          availableBalance: mapped.availableBalance,
+          totalWalletBalance: mapped.totalWalletBalance,
+          info: balance.info
+        };
+      } catch (error) {
+        console.warn(`⚠️ Failed to fetch account info from ${this.id}:`, error instanceof Error ? error.message : 'Unknown error');
+        throw error;
+      }
+    }
     return await this.makeSignedRequest('/fapi/v2/account');
   }
 
@@ -470,6 +753,14 @@ export class BinanceService {
    * 获取持仓信息
    */
   async getPositions(): Promise<PositionResponse[]> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+      const positions = await exchange.fetchPositions();
+      return positions
+        .map(position => this.mapCcxtPosition(position))
+        .filter(position => Math.abs(parseFloat(position.positionAmt)) > 0);
+    }
     const response = await this.makeSignedRequest<PositionResponse[]>('/fapi/v2/positionRisk');
     return response.filter((pos: PositionResponse) => parseFloat(pos.positionAmt) !== 0);
   }
@@ -478,6 +769,12 @@ export class BinanceService {
    * 获取所有仓位信息(包括零仓位)
    */
   async getAllPositions(): Promise<PositionResponse[]> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+      const positions = await exchange.fetchPositions();
+      return positions.map(position => this.mapCcxtPosition(position));
+    }
     return await this.makeSignedRequest<PositionResponse[]>('/fapi/v2/positionRisk');
   }
 
@@ -485,6 +782,66 @@ export class BinanceService {
    * 下单
    */
   async placeOrder(order: BinanceOrder): Promise<OrderResponse> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+
+      const ccxtSymbol = this.toCcxtSymbol(order.symbol);
+      const amount = parseFloat(this.formatQuantity(order.quantity, order.symbol));
+      const price = order.price ? parseFloat(this.formatPrice(order.price, order.symbol)) : undefined;
+      const isReduceOnly = order.closePosition === "true";
+
+      const params: Record<string, any> = {};
+      if (isReduceOnly) {
+        params.reduceOnly = true;
+        params.closeOnTrigger = true;
+      }
+      if (order.timeInForce) {
+        params.timeInForce = order.timeInForce;
+      }
+
+      let ccxtType = 'market';
+      switch (order.type) {
+        case 'MARKET':
+          ccxtType = 'market';
+          break;
+        case 'LIMIT':
+          ccxtType = 'limit';
+          break;
+        case 'STOP':
+        case 'STOP_MARKET':
+          ccxtType = 'market';
+          if (order.stopPrice) {
+            const stop = parseFloat(this.formatPrice(order.stopPrice, order.symbol));
+            params.stopPrice = stop;
+            params.triggerPrice = stop;
+          }
+          params.type = 'stop';
+          break;
+        case 'TAKE_PROFIT':
+        case 'TAKE_PROFIT_MARKET':
+          ccxtType = 'market';
+          if (order.stopPrice) {
+            const tp = parseFloat(this.formatPrice(order.stopPrice, order.symbol));
+            params.stopPrice = tp;
+            params.triggerPrice = tp;
+          }
+          params.type = 'take_profit';
+          break;
+      }
+
+      const ccxtOrder = await exchange.createOrder(
+        ccxtSymbol,
+        ccxtType,
+        order.side.toLowerCase(),
+        amount,
+        price,
+        params
+      );
+
+      return this.mapCcxtOrder(ccxtOrder);
+    }
+
     const params: Record<string, any> = {
       symbol: this.convertSymbol(order.symbol),
       side: order.side,
@@ -508,8 +865,19 @@ export class BinanceService {
   /**
    * 设置杠杆
    */
-  async setLeverage(symbol: string, leverage: number): Promise<any> {
-    return await this.makeSignedRequest('/fapi/v1/leverage', 'POST', {
+  async setLeverage(symbol: string, leverage: number): Promise<void> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      if (exchange.has?.setLeverage) {
+        try {
+          await exchange.setLeverage(leverage, this.toCcxtSymbol(symbol));
+        } catch (error) {
+          console.warn(`⚠️ Failed to set leverage on ${this.id}:`, error instanceof Error ? error.message : 'Unknown error');
+        }
+      }
+      return;
+    }
+    await this.makeSignedRequest('/fapi/v1/leverage', 'POST', {
       symbol: this.convertSymbol(symbol),
       leverage: leverage.toString(),
     });
@@ -517,11 +885,22 @@ export class BinanceService {
 
   /**
    * 设置保证金模式
-   * @param symbol 交易对
-   * @param marginType ISOLATED(逐仓) 或 CROSSED(全仓)
-   */
-  async setMarginType(symbol: string, marginType: 'ISOLATED' | 'CROSSED'): Promise<any> {
-    return await this.makeSignedRequest('/fapi/v1/marginType', 'POST', {
+ * @param symbol 交易对
+ * @param marginType ISOLATED(逐仓) 或 CROSSED(全仓)
+ */
+  async setMarginType(symbol: string, marginType: 'ISOLATED' | 'CROSSED'): Promise<void> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      if (exchange.has?.setMarginMode) {
+        try {
+          await exchange.setMarginMode(marginType.toLowerCase(), this.toCcxtSymbol(symbol));
+        } catch (error) {
+          console.warn(`⚠️ Failed to set margin mode on ${this.id}:`, error instanceof Error ? error.message : 'Unknown error');
+        }
+      }
+      return;
+    }
+    await this.makeSignedRequest('/fapi/v1/marginType', 'POST', {
       symbol: this.convertSymbol(symbol),
       marginType: marginType,
     });
@@ -530,7 +909,16 @@ export class BinanceService {
   /**
    * 取消订单
    */
-  async cancelOrder(symbol: string, orderId: number): Promise<OrderResponse> {
+  async cancelOrder(symbol: string, orderId: number | string): Promise<OrderResponse> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+      const ccxtOrder = await exchange.cancelOrder(
+        orderId.toString(),
+        this.toCcxtSymbol(symbol)
+      );
+      return this.mapCcxtOrder(ccxtOrder);
+    }
     return await this.makeSignedRequest<OrderResponse>('/fapi/v1/order', 'DELETE', {
       symbol: this.convertSymbol(symbol),
       orderId: orderId.toString(),
@@ -540,8 +928,14 @@ export class BinanceService {
   /**
    * 取消所有订单
    */
-  async cancelAllOrders(symbol: string): Promise<any> {
-    return await this.makeSignedRequest('/fapi/v1/allOpenOrders', 'DELETE', {
+  async cancelAllOrders(symbol: string): Promise<void> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+      await exchange.cancelAllOrders(this.toCcxtSymbol(symbol));
+      return;
+    }
+    await this.makeSignedRequest('/fapi/v1/allOpenOrders', 'DELETE', {
       symbol: this.convertSymbol(symbol)
     });
   }
@@ -549,7 +943,16 @@ export class BinanceService {
   /**
    * 获取订单状态
    */
-  async getOrderStatus(symbol: string, orderId: number): Promise<OrderResponse> {
+  async getOrderStatus(symbol: string, orderId: number | string): Promise<OrderResponse> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+      const ccxtOrder = await exchange.fetchOrder(
+        orderId.toString(),
+        this.toCcxtSymbol(symbol)
+      );
+      return this.mapCcxtOrder(ccxtOrder);
+    }
     return await this.makeSignedRequest<OrderResponse>('/fapi/v1/order', 'GET', {
       symbol: this.convertSymbol(symbol),
       orderId: orderId.toString(),
@@ -560,6 +963,14 @@ export class BinanceService {
    * 获取开放订单
    */
   async getOpenOrders(symbol?: string): Promise<OrderResponse[]> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+      const ccxtOrders = await exchange.fetchOpenOrders(
+        symbol ? this.toCcxtSymbol(symbol) : undefined
+      );
+      return ccxtOrders.map(order => this.mapCcxtOrder(order));
+    }
     const params: Record<string, any> = {};
     if (symbol) params.symbol = this.convertSymbol(symbol);
 
@@ -569,7 +980,21 @@ export class BinanceService {
   /**
    * 获取24小时价格变动统计
    */
-  async get24hrTicker(symbol?: string): Promise<any> {
+  async get24hrTicker(symbol?: string): Promise<ExchangeTicker> {
+    if (this.useCcxt) {
+      if (!symbol) {
+        throw new Error('Symbol is required when fetching ticker in CCXT mode');
+      }
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+      const ticker = await exchange.fetchTicker(this.toCcxtSymbol(symbol));
+      const lastPrice = this.toSafeNumber(ticker.last ?? ticker.info?.lastPrice);
+      return {
+        ...ticker,
+        lastPrice: lastPrice.toString()
+      };
+    }
+
     const params: Record<string, any> = {};
     if (symbol) params.symbol = this.convertSymbol(symbol);
 
@@ -591,6 +1016,43 @@ export class BinanceService {
     fromId?: number,
     limit: number = 500
   ): Promise<UserTrade[]> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+
+      const ccxtSymbol = symbol ? this.toCcxtSymbol(symbol) : undefined;
+      const since = startTime || undefined;
+      const params: Record<string, any> = {};
+      if (endTime) {
+        params.endTime = endTime;
+      }
+      if (fromId) {
+        params.fromId = fromId;
+      }
+
+      const trades = await exchange.fetchMyTrades(ccxtSymbol, since, limit, params);
+      return trades.map(trade => {
+        const normalizedSide = (trade.side || 'buy').toUpperCase() === 'SELL' ? 'SELL' as const : 'BUY' as const;
+        return {
+          symbol: this.fromCcxtSymbol(trade.symbol || ''),
+          id: trade.id ? Number(trade.id) : trade.timestamp || Date.now(),
+          orderId: trade.order ? Number(trade.order) || 0 : 0,
+          side: normalizedSide,
+          qty: this.toSafeNumber(trade.amount).toString(),
+          price: this.toSafeNumber(trade.price).toString(),
+          quoteQty: this.toSafeNumber(trade.cost).toString(),
+          commission: this.toSafeNumber(trade.fee?.cost).toString(),
+          commissionAsset: trade.fee?.currency || 'USDT',
+          realizedPnl: this.toSafeNumber((trade.info as any)?.realizedPnl).toString(),
+          time: trade.timestamp || Date.now(),
+          positionSide: normalizedSide === 'SELL' ? 'SHORT' : 'LONG',
+          buyer: normalizedSide !== 'SELL',
+          maker: (trade.takerOrMaker || '').toLowerCase() === 'maker',
+          info: trade.info
+        };
+      });
+    }
+
     const params: Record<string, any> = { limit };
 
     if (symbol) params.symbol = this.convertSymbol(symbol);
@@ -613,6 +1075,61 @@ export class BinanceService {
     endTime: number,
     symbol?: string
   ): Promise<UserTrade[]> {
+    if (this.useCcxt) {
+      const exchange = this.ensureCcxtExchange();
+      await this.ensureCcxtMarkets();
+
+      const ccxtSymbol = symbol ? this.toCcxtSymbol(symbol) : undefined;
+      const allTrades: UserTrade[] = [];
+      let fetchSince = startTime;
+      const limit = 1000;
+
+      while (fetchSince < endTime) {
+        const trades = await exchange.fetchMyTrades(
+          ccxtSymbol,
+          fetchSince,
+          limit,
+          { endTime }
+        );
+
+        if (!trades.length) {
+          break;
+        }
+
+        const mapped = trades.map(trade => {
+          const normalizedSide = (trade.side || 'buy').toUpperCase() === 'SELL' ? 'SELL' as const : 'BUY' as const;
+          return {
+            symbol: this.fromCcxtSymbol(trade.symbol || ''),
+            id: trade.id ? Number(trade.id) : trade.timestamp || Date.now(),
+            orderId: trade.order ? Number(trade.order) || 0 : 0,
+            side: normalizedSide,
+            qty: this.toSafeNumber(trade.amount).toString(),
+            price: this.toSafeNumber(trade.price).toString(),
+            quoteQty: this.toSafeNumber(trade.cost).toString(),
+            commission: this.toSafeNumber(trade.fee?.cost).toString(),
+            commissionAsset: trade.fee?.currency || 'USDT',
+            realizedPnl: this.toSafeNumber((trade.info as any)?.realizedPnl).toString(),
+            time: trade.timestamp || Date.now(),
+            positionSide: normalizedSide === 'SELL' ? 'SHORT' : 'LONG',
+            buyer: normalizedSide !== 'SELL',
+            maker: (trade.takerOrMaker || '').toLowerCase() === 'maker',
+            info: trade.info
+          };
+        });
+
+        allTrades.push(...mapped);
+
+        const lastTrade = trades[trades.length - 1];
+        if (!lastTrade || !lastTrade.timestamp) {
+          break;
+        }
+        fetchSince = lastTrade.timestamp + 1;
+      }
+
+      allTrades.sort((a, b) => a.time - b.time);
+      return allTrades.filter(trade => trade.time >= startTime && trade.time <= endTime);
+    }
+
     const allTrades: UserTrade[] = [];
     const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
 
@@ -648,7 +1165,7 @@ export class BinanceService {
     return allTrades;
   }
 
-  convertToBinanceOrder(tradingPlan: any): BinanceOrder {
+  convertToOrder(tradingPlan: any): BinanceOrder {
     return {
       symbol: tradingPlan.symbol,
       side: tradingPlan.side,
@@ -656,6 +1173,10 @@ export class BinanceService {
       quantity: this.formatQuantity(tradingPlan.quantity, tradingPlan.symbol),
       leverage: tradingPlan.leverage
     };
+  }
+
+  convertToBinanceOrder(tradingPlan: any): BinanceOrder {
+    return this.convertToOrder(tradingPlan);
   }
 
   /**

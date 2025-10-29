@@ -21,19 +21,22 @@ export class TradingExecutor {
   private testnet: boolean;
   private telegramService?: TelegramService;
   private configManager: ConfigManager;
+  private exchangeLabel: string;
 
 
   constructor(apiKey?: string, apiSecret?: string, testnet?: boolean, configManager?: ConfigManager) {
-    // 如果没有明确指定，则从环境变量读取
-    if (testnet === undefined) {
-      testnet = process.env.BINANCE_TESTNET === 'true';
-    }
-    this.testnet = testnet;
+    const exchangeId = (process.env.TRADING_EXCHANGE || 'binance').toLowerCase();
+    const fallbackTestnet = exchangeId === 'bybit'
+      ? process.env.BYBIT_TESTNET === 'true'
+      : process.env.BINANCE_TESTNET === 'true';
+    this.testnet = testnet !== undefined ? testnet : fallbackTestnet;
     this.binanceService = new BinanceService(
-      apiKey || process.env.BINANCE_API_KEY || "",
-      apiSecret || process.env.BINANCE_API_SECRET || "",
-      testnet
+      apiKey ?? '',
+      apiSecret ?? '',
+      this.testnet,
+      exchangeId
     );
+    this.exchangeLabel = this.binanceService.id.toUpperCase();
     this.configManager = configManager || new ConfigManager();
     if (!configManager) {
       this.configManager.loadFromEnvironment();
@@ -46,10 +49,10 @@ export class TradingExecutor {
   async validateConnection(): Promise<boolean> {
     try {
       const serverTime = await this.binanceService.getServerTime();
-      console.log(`✅ Connected to Binance API (Server time: ${new Date(serverTime)})`);
+      console.log(`✅ Connected to ${this.exchangeLabel} API (Server time: ${new Date(serverTime)})`);
       return true;
     } catch (error) {
-      console.error(`❌ Failed to connect to Binance API: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error(`❌ Failed to connect to ${this.exchangeLabel} API: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return false;
     }
   }
@@ -87,7 +90,7 @@ export class TradingExecutor {
       if (!isConnected) {
         return {
           success: false,
-          error: "Failed to connect to Binance API"
+          error: `Failed to connect to ${this.exchangeLabel} API`
         };
       }
 
