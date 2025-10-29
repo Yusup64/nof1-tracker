@@ -275,19 +275,52 @@ export class BinanceService implements PerpExchange {
 
   private mapCcxtAccount(balance: any): ExchangeAccountInfo {
     const usdt = balance?.USDT || balance?.USDC || {};
-    const free = this.toSafeNumber(usdt.free);
-    const total = this.toSafeNumber(usdt.total);
-    const used = this.toSafeNumber(usdt.used);
+    let free = this.toSafeNumber(usdt.free);
+    let total = this.toSafeNumber(usdt.total);
+    let used = this.toSafeNumber(usdt.used);
+    let totalUnrealized = this.toSafeNumber(usdt.unrealizedPnl ?? usdt.unrealisedPnl);
 
-    return {
+    // Fallback to raw balance info for unified accounts
+    const info = balance?.info ?? {};
+    const candidates = ([] as any[])
+      .concat(info?.result?.list ?? [])
+      .concat(info?.result?.balance ?? [])
+      .concat(info?.list ?? []);
+
+    const accountEntry = candidates.find(entry => entry?.accountType === 'UNIFIED')
+      || candidates.find(entry => entry?.accountType === 'contract' || entry?.accountType === 'CONTRACT')
+      || candidates[0];
+
+    if (accountEntry) {
+      total = total || this.toSafeNumber(accountEntry.totalWalletBalance ?? accountEntry.totalEquity ?? accountEntry.walletBalance);
+      free = free || this.toSafeNumber(accountEntry.totalAvailableBalance ?? accountEntry.availableBalance ?? accountEntry.walletBalance);
+      used = used || this.toSafeNumber(
+        accountEntry.totalPositionInitialMargin ??
+        accountEntry.totalInitialMargin ??
+        accountEntry.positionMargin ??
+        accountEntry.marginBalance ??
+        accountEntry.totalMarginBalance
+      );
+      totalUnrealized = totalUnrealized || this.toSafeNumber(
+        accountEntry.totalUnrealisedPnl ??
+        accountEntry.totalUnrealizedPnl ??
+        accountEntry.unrealisedPnl ??
+        accountEntry.unrealizedPnl
+      );
+    }
+
+    const response: ExchangeAccountInfo = {
       totalWalletBalance: total.toString(),
       availableBalance: free.toString(),
       totalInitialMargin: used.toString(),
       totalMaintMargin: '0',
       totalPositionInitialMargin: used.toString(),
       totalOpenOrderInitialMargin: '0',
-      totalCrossWalletBalance: total.toString()
+      totalCrossWalletBalance: total.toString(),
+      totalUnrealizedProfit: totalUnrealized.toString()
     };
+
+    return response;
   }
 
   /**

@@ -120,7 +120,10 @@ export function buildApiApp(services: ServiceContainer, staticDir?: string) {
         services.executor.getAllPositions()
       ]);
 
-      const totalUnrealized = computeUnrealizedPnl(positions);
+      const reportedUnrealizedRaw = account?.totalUnrealizedProfit ?? account?.totalUnrealizedPnl;
+      const reportedUnrealized = typeof reportedUnrealizedRaw === 'string' ? parseFloat(reportedUnrealizedRaw) : Number(reportedUnrealizedRaw);
+      const computedUnrealized = computeUnrealizedPnl(positions);
+      const totalUnrealized = Number.isFinite(reportedUnrealized) ? reportedUnrealized : computedUnrealized;
       const enrichedAccount = {
         ...account,
         exchange: services.executor.getExchangeLabel(),
