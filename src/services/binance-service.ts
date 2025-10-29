@@ -30,18 +30,6 @@ export interface BinanceApiResponse<T = any> {
   data?: T;
 }
 
-
-(async () => {
-  const exchange = new ccxt.bybit({
-    apiKey: process.env.BYBIT_API_KEY,
-    secret: process.env.BYBIT_API_SECRET,
-    enableRateLimit: true,
-  });
-  exchange.setSandboxMode(process.env.BYBIT_TESTNET === 'true');
-  // console.log("🚀 ~ exchange:", exchange.options)
-  // console.log(await exchange.fetchBalance());
-})();
-
 // Binance API通常直接返回数据，不包装在response对象中
 export type BinanceDirectResponse<T> = T;
 
