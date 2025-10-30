@@ -211,34 +211,159 @@ export class BinanceService implements PerpExchange {
       return 0;
     }
     if (typeof value === 'number') {
-      return value;
+      return Number.isFinite(value) ? value : 0;
     }
     const parsed = parseFloat(value);
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  private normalizeNumericString(value: string | number | undefined | null): string | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) {
+        return undefined;
+      }
+      return value.toString();
+    }
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.toLowerCase() === 'nan') {
+      return undefined;
+    }
+    return trimmed;
+  }
+
+  private pickOrderValue(
+    candidates: Array<string | number | undefined | null>,
+    { allowZero = false }: { allowZero?: boolean } = {}
+  ): string | undefined {
+    for (const candidate of candidates) {
+      const normalized = this.normalizeNumericString(candidate);
+      if (normalized === undefined) {
+        continue;
+      }
+      if (!allowZero) {
+        const numeric = parseFloat(normalized);
+        if (!Number.isFinite(numeric) || numeric === 0) {
+          continue;
+        }
+      }
+      return normalized;
+    }
+    return undefined;
+  }
+
+  private extractCcxtOrderInfo(order: CcxtOrder): Record<string, any> {
+    const info = (order.info ?? {}) as Record<string, any>;
+    if (info && typeof info === 'object') {
+      if (info.result && typeof info.result === 'object') {
+        return {
+          ...info,
+          ...info.result
+        };
+      }
+    }
+    return info;
+  }
+
   private mapCcxtOrder(order: CcxtOrder): OrderResponse {
     const orderId = order.id ? Number(order.id) : Date.now();
     const side = (order.side || 'buy').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+    const info = this.extractCcxtOrderInfo(order);
+
+    const avgPrice =
+      this.pickOrderValue(
+        [
+          order.average,
+          info.avgPrice,
+          info.averagePrice,
+          info.lastPrice,
+          info.execPrice,
+          order.price,
+          info.orderPrice,
+          info.price
+        ]
+      ) ?? undefined;
+
+    const price =
+      this.pickOrderValue(
+        [
+          order.price,
+          info.price,
+          info.orderPrice,
+          info.triggerPrice,
+          avgPrice
+        ]
+      );
+
+    const executedQty =
+      this.pickOrderValue(
+        [
+          order.filled,
+          info.cumExecQty,
+          info.execQty,
+          info.executedQty,
+          info.lastExecQty,
+          info.lastFillQty
+        ]
+      );
+
+    const origQty =
+      this.pickOrderValue(
+        [
+          order.amount,
+          info.qty,
+          info.quantity,
+          info.orderQty,
+          info.origQty,
+          executedQty
+        ],
+        { allowZero: true }
+      ) ?? '0';
+
+    const cumQuote =
+      this.pickOrderValue(
+        [
+          order.cost,
+          info.cumExecValue,
+          info.cumExecQuote,
+          info.totalExecValue
+        ],
+        { allowZero: true }
+      ) ?? '';
+
+    const stopPrice =
+      this.pickOrderValue(
+        [
+          order.stopPrice,
+          (order as any).triggerPrice,
+          info.stopPrice,
+          info.triggerPrice
+        ]
+      ) ?? '';
+
+    const normalizedExecutedQty = executedQty ?? origQty;
+    const normalizedPrice = price ?? '';
 
     return {
       orderId,
       symbol: this.fromCcxtSymbol(order.symbol || ''),
       status: (order.status || 'NEW').toUpperCase(),
       clientOrderId: order.clientOrderId || '',
-      price: this.toSafeNumber(order.price).toString(),
-      avgPrice: this.toSafeNumber(order.average ?? order.price).toString(),
-      origQty: this.toSafeNumber(order.amount).toString(),
-      executedQty: this.toSafeNumber(order.filled).toString(),
-      cumQty: this.toSafeNumber(order.filled).toString(),
-      cumQuote: this.toSafeNumber(order.cost).toString(),
+      price: normalizedPrice,
+      avgPrice: avgPrice ?? '',
+      origQty,
+      executedQty: normalizedExecutedQty,
+      cumQty: normalizedExecutedQty,
+      cumQuote,
       timeInForce: (order.timeInForce || 'GTC') as any,
       type: (order.type || '').toUpperCase(),
       reduceOnly: Boolean(order.reduceOnly),
       closePosition: Boolean(order.reduceOnly),
       side,
       positionSide: side === 'SELL' ? 'SHORT' : 'LONG',
-      stopPrice: this.toSafeNumber(order.stopPrice ?? order.triggerPrice).toString(),
+      stopPrice,
       workingType: 'MARK_PRICE',
       priceProtect: false,
       origType: (order.type || '').toUpperCase(),
