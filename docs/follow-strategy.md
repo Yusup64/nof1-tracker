@@ -217,7 +217,7 @@ private async handleEntryChanged(
 
 **触发条件**:
 - 之前没有该交易对的仓位
-- 当前`quantity > 0`
+- 当前`quantity !== 0`，正数表示多单，负数表示空单
 
 **执行策略**: 
 1. **订单去重** - 检查entry_oid是否已处理
@@ -278,7 +278,7 @@ private handleNewPosition(
 ### 3. 📉 平仓检测
 
 **触发条件**:
-- 之前有仓位 (`quantity > 0`)
+- 之前有仓位 (`quantity !== 0`, 正数表示多单，负数表示空单)
 - 当前仓位为空 (`quantity = 0`)
 
 **执行策略**: 生成EXIT类型的跟单计划

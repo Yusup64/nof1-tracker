@@ -67,7 +67,7 @@ npm start -- follow gpt-5 --total-margin 5000
 ```
 
 ### 2. 📈 新开仓检测
-**条件**: 之前无仓位 + `quantity > 0`
+**条件**: 之前无仓位 + （`quantity ！== 0`，正数表示多单，负数表示空单）
 **操作**: 订单去重 → 价格检查 → 跟单开仓
 ```
 📈 NEW POSITION: BTC BUY 0.05 @ 109538 (OID: 210131632249)
