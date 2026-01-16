@@ -1,5 +1,8 @@
 # Nof1 AI Agent 跟单交易系统
 
+> 由于nof1.ai新一季是炒美股, 所以本脚本暂时没用了 </br>
+> 如果想用自己的大模型来执行自动交易, 可以使用 https://github.com/terryso/LLM-trader-test 这个项目
+
 中文 | [English](./README_EN.md)
 
 ![TypeScript](https://img.shields.io/badge/typescript-5.0%2B-blue)
